@@ -61,3 +61,60 @@ output "app_env" {
   description = "NEXT_PUBLIC_ENV。既存の environment 変数をそのまま使う（dev/prod）。"
   value       = var.environment
 }
+
+# --- 配信（hosting） ---
+output "cloudfront_domain_name" {
+  description = "配信 URL（確認用）。https://<この値>/"
+  value       = module.hosting.cloudfront_domain_name
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront ディストリビューション ID（CI の invalidation が terraform output -raw で取得する）。"
+  value       = module.hosting.cloudfront_distribution_id
+}
+
+output "assets_bucket_name" {
+  description = "静的アセット用 S3 バケット名（CI の aws s3 sync が terraform output -raw で取得する）。"
+  value       = module.hosting.assets_bucket_name
+}
+
+output "server_function_name" {
+  description = "server(SSR) Lambda 関数名。"
+  value       = module.hosting.server_function_name
+}
+
+output "image_function_name" {
+  description = "image 最適化 Lambda 関数名。"
+  value       = module.hosting.image_function_name
+}
+
+output "asset_sync_commands" {
+  description = "apply 後に .open-next/ を S3 へ投入するコマンド（CI が行う内容と同じ）。"
+  value       = module.hosting.asset_sync_commands
+}
+
+output "site_url" {
+  description = "独自ドメインでの配信 URL（人が開く用・末尾スラッシュ付き）。"
+  value       = "https://${var.site_domain}/"
+}
+
+# --- 問い合わせフォーム（contact） ---
+output "contact_table_name" {
+  description = "問い合わせ保存用 DynamoDB テーブル名。"
+  value       = module.contact.table_name
+}
+
+output "contact_rate_limit_table_name" {
+  description = "送信レート制限用 DynamoDB テーブル名（§5）。"
+  value       = module.contact.rate_limit_table_name
+}
+
+output "ses_domain_identity_arn" {
+  description = "SES 送信ドメイン ID（dev.aibee-lab.jp）の ARN。"
+  value       = module.contact.ses_domain_identity_arn
+}
+
+output "ses_domain_verified_for_sending" {
+  description = "送信ドメインが DKIM 検証済みで送信可能か（apply 直後 false → DKIM 伝播後 true）。"
+  value       = module.contact.ses_domain_verified_for_sending
+}

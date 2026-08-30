@@ -11,6 +11,18 @@ terraform {
       # 現行メジャーは 6。メジャーだけ固定し、マイナー/パッチは .terraform.lock.hcl で管理する。
       version = "~> 6.0"
     }
+
+    # Lambda の zip を plan 時に生成する（hosting の archive_file）。
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
+
+    # レート制限の IP ハッシュ用ソルトを生成する（§5・rate-limit-salt.tf）。
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   # state は S3 backend ＋ S3 ネイティブ lockfile（§7）。ロック用 DynamoDB は作らない

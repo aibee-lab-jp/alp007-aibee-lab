@@ -70,3 +70,65 @@ variable "portal_url" {
   EOT
   type        = string
 }
+
+# --- CloudFront の配信オプション（§7） ---
+variable "alias_enabled" {
+  description = <<-EOT
+    CloudFront に独自ドメイン（aliases）とエイリアス A/AAAA を適用するか（dev: true）。
+    **prod の初回 apply は false**（旧サイトが同じドメインを持つため CNAMEAlreadyExists になる）。
+    既定ドメインで確認後、カットオーバー時に true にする（§7・§9 ステップ2〜3）。
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "noindex_enabled" {
+  description = "CloudFront で X-Robots-Tag: noindex, nofollow を全 behavior に付けるか（dev: true / prod: false）。"
+  type        = bool
+  default     = false
+}
+
+# --- Basic 認証（dev のみ・CloudFront Function） ---
+variable "basic_auth_enabled" {
+  description = "CloudFront Function（viewer-request）で Basic 認証を掛けるか（dev: true / prod: false）。"
+  type        = bool
+  default     = false
+}
+
+variable "basic_auth_username" {
+  description = <<-EOT
+    Basic 認証のユーザー名（値は terraform.tfvars。§7 の明示的な例外＝理由は tfvars のコメント参照）。
+    default="" は prod で値を要求しないため。有効時に空だと hosting 側の precondition で失敗する。
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "basic_auth_password" {
+  description = <<-EOT
+    Basic 認証のパスワード（値は terraform.tfvars。§7 の明示的な例外）。
+    パスワードにコロンは使わない（Basic 認証の連結子のため。§7）。
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# --- 問い合わせフォーム（§5） ---
+variable "ses_sender_address" {
+  description = <<-EOT
+    SES 送信元アドレス（dev: no-reply@dev.aibee-lab.jp）。**ドメイン部が SES 検証ドメインになる**
+    （main.tf の locals が split して contact モジュールへ渡す＝送信元と検証ドメインの不整合を防ぐ）。
+  EOT
+  type        = string
+}
+
+variable "contact_notify_address" {
+  description = <<-EOT
+    運営への通知メール宛先（admin@aibee-lab.jp）。server Lambda に CONTACT_NOTIFY_ADDRESS として渡す。
+    この email identity は §10 の共有資源で Terraform 管理外（本リポでは作成も参照もしない）。
+    dev アカウントでは作成・verify 済み（SES サンドボックス中は宛先も verify 必須のため）。
+  EOT
+  type        = string
+}
