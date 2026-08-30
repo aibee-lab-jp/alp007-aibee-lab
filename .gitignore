@@ -26,6 +26,9 @@ crash.log
 crash.*.log
 tfplan
 *.tfplan
+# Lambda の zip（hosting の archive_file が plan のたびに生成する成果物。
+# 1回で 15MB 程度になるためコミットしない。CI では artifact 経由で plan → apply へ引き継ぐ・§8）
+**/.terraform-artifacts/
 override.tf
 override.tf.json
 *_override.tf

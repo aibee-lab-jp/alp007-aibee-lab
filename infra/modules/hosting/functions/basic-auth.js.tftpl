@@ -1,0 +1,24 @@
+// CloudFront Function（viewer-request）: Basic 認証。
+// dev の未公開コンテンツを関係者以外に見せないための軽い保護。
+//
+// 期待する Authorization ヘッダー値（"Basic <base64(user:pass)>"）は Terraform 側で組み立てて
+// ${expected_authorization} に埋め込む。関数内では文字列比較のみ（base64 を扱わない＝ランタイム非依存）。
+// ※ CloudFront Functions ではヘッダー名は小文字（authorization / www-authenticate）。
+function handler(event) {
+  var request = event.request;
+  var headers = request.headers;
+  var expected = "${expected_authorization}";
+
+  if (!headers.authorization || headers.authorization.value !== expected) {
+    return {
+      statusCode: 401,
+      statusDescription: "Unauthorized",
+      headers: {
+        "www-authenticate": { value: 'Basic realm="${realm}", charset="UTF-8"' }
+      }
+    };
+  }
+
+  // 認証成功：リクエストをそのまま通す。
+  return request;
+}
