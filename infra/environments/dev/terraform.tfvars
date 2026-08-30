@@ -29,8 +29,8 @@ noindex_enabled = true # dev は検索回避（X-Robots-Tag: noindex, nofollow�
 # ※ パスワードにコロン（:）は使わない（Basic 認証の連結子のため。§7）。
 # ※ 値は仮のプレースホルダ。実際の値はオーナーが編集する（apply 前に差し替えること）。
 basic_auth_enabled  = true
-basic_auth_username = "REPLACE_ME_USER"
-basic_auth_password = "REPLACE_ME_PASSWORD"
+basic_auth_username = "atsushi-ishida@aibee-lab.jp"
+basic_auth_password = "Chovi9@0726"
 
 # --- 問い合わせフォーム（§5） ---
 ses_sender_address     = "no-reply@dev.aibee-lab.jp" # ドメイン部 dev.aibee-lab.jp が SES 検証ドメインになる
