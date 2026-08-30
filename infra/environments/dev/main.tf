@@ -80,7 +80,7 @@ module "cicd" {
   environment = var.environment # sub の environment 名（GitHub Environment 名 "dev" と一致させる）
 
   # dev/prod で変わらない値なので tfvars ではなくここに置く（tfvars が持つのは環境差だけ。§7）。
-  github_repository = "aibee-lab-jp/alp007-aibee-lab"
+  github_repository = "aibee-lab-jp@198689698/alp007-aibee-lab@1337691730"
 }
 
 # DNS：dev.aibee-lab.jp のホストゾーン（新規作成）＋ACM 証明書（us-east-1）＋DNS 検証（§7）。
