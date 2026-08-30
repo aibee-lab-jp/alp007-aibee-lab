@@ -256,7 +256,8 @@ infra/
 
 - **OIDC プロバイダは作らない（§10 の共有資源・Terraform 管理外）**：1アカウントに同一 URL のプロバイダは1つしか持てず、複数プロジェクトが共有する。本リポは `data "aws_iam_openid_connect_provider"`（URL 指定）で参照し、**ロールのみ作成**する。dev アカウントには作成済み。prod アカウントは prod 構築前に CLI で作成する（コマンドは §10）。
 - **信頼ポリシーの sub は environment ベース**：ジョブが `environment:` を参照すると subject が `ref` ベースから `environment` ベースに変わるため、`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev` の形式で書く（`ref:refs/heads/...` で書くと認証が失敗する。just47 で実証済み）。**結果としてブランチ制限は GitHub Environments の Deployment branches が唯一の担保**になる（AWS 側では判定できない）。
-- **【本リポ固有の注意】immutable subject claims**：2026-07-15 以降に新規作成されたリポジトリは subject が `repo:owner@ID/repo@ID:...` の**ID 入り書式**になる見込み（just47 は既存リポのため標準書式）。本リポは新規作成なのでこの書式に該当する可能性が高い。**初回に実際の subject を確認してから信頼ポリシーを書くこと**（just47 の sub 文字列を写すと認証に失敗しうる）。
+- **【本リポ固有の確認結果】immutable subject claims は無効（2026-08-30 実測）**：`GET /repos/aibee-lab-jp/alp007-aibee-lab/actions/oidc/customization/sub` が `use_default: true` / `use_immutable_subject: false` を返したため、**subject は just47 と同じ標準書式**（`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev`）で書いてよい。2026-07-15 以降の新規リポジトリでも自動適用はされていなかった。
+  - 参考：同 API は `sub_claim_prefix` として ID 入り書式 `repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730` を返す。**将来 immutable subject を有効化した場合はこの prefix に切り替わる**ため、そのときは信頼ポリシーを `repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730:environment:dev` の形に直す（値は上記 API で再確認できる）。
 - 権限は**サービス単位のワイルドカード**（`s3:* cloudfront:* lambda:* iam:* dynamodb:* ses:* route53:* acm:* logs:* sts:*`、Resource `*`）。Terraform は apply のたびに大量の Describe/Get/List を行いアクション単位の列挙が現実的でないため。守りは信頼ポリシー（repo＋environment 限定）と GitHub 側のブランチ制限が担う。dev で必要権限を実践的に確定し、その内容を prod にも適用する。
 
 **hosting の CloudFront まわり**
@@ -401,7 +402,11 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 ## 11. 残タスク
 
 0. ~~現状把握（§9 ステップ0）~~ …**完了（2026-08-30）**。結果と結論は §9 ステップ0 に記録
-1. ~~リポジトリ作成（`alp007-aibee-lab`）~~ …**完了（2026-08-30。develop ブランチに初期構成〈仕様書・CLAUDE.md・ロゴ・.gitignore・.nvmrc・.env.example〉を push 済み）**。以降：リファレンス配置（§0）、state バケット作成、**初回セットアップ時に npm audit を棚卸しし本書へ記録、OIDC subject の実書式を確認**（§7 の immutable claims）。dev 構築と前後して just47 側の共有資源の state 除外（§10 反映事項1）を実施
+1. ~~リポジトリ作成（`alp007-aibee-lab`）~~ …**完了（2026-08-30。develop ブランチに初期構成〈仕様書・CLAUDE.md・ロゴ・.gitignore・.nvmrc・.env.example・state バケット作成スクリプト〉を push 済み）**。以降の状況：
+   - リファレンス配置（§0）…**完了**（`.reference/just47/` 展開済み・git 追跡対象外を確認）
+   - dev の state バケット作成…**完了（2026-08-30）**。`alp007-aibee-lab-tfstate-dev-127289506790`（バージョニング・SSE-S3・パブリックアクセス全ブロック）
+   - OIDC subject の実書式確認…**完了（2026-08-30）**。標準書式でよい（§7）
+   - 残り：**初回セットアップ時に npm audit を棚卸しし本書へ記録**。dev 構築と前後して just47 側の共有資源の state 除外（§10 反映事項1）を実施
 2. Claude Design でデザイン作成（ブリーフ＝`SITE_DESIGN_BRIEF.md` 第1版。IA・確定文言・ビジュアル方向を統合済み。SITEMAP.md／文言ドラフトは役目を終え削除可）
 3. dev 構築（§9 ステップ1）と実装（Claude Code）、dev で通し確認
 4. prod 構築（ステップ2）→ カットオーバー（ステップ3）→ 後始末・SES 申請（ステップ4）
@@ -427,3 +432,4 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 | 2026-08-30 | 第10版 | 英字表記の正を **AiBee Lab** に変更（既存ロゴの表記に準拠。§1・冒頭を更新。© 表記など画面上の表記はブリーフ第2版で反映）。ロゴは新規作成ではなく**既存 SVG ロゴを活用する方針に変更**——詳細（サイトのヘッダーは単色インク版／favicon・OG は原色パネル版）はブリーフ §0・§7 が正 |
 | 2026-08-30 | 第11版 | **現状把握（§9 ステップ0）完了と、それに伴う移行設計の確定**：現行資産はすべて prod アカウント（Route53・CloudFront・S3・旧フォーム）、レジストラはバリュードメイン、メールは **AWS WorkMail**（MX＝`inbound-smtp.us-west-2`。SPF/DKIM/DMARC 無し。本プロジェクトでは一切触らない）。決定3点：(1) **ゾーン移管は不要・レジストラのネームサーバーは触らない**（メール断リスクを移行から排除）、(2) **prod の dns モジュールはゾーンを新規作成せず `data` 参照**しレコードのみ作成（dev は新規作成＋prod ゾーンへ NS 4本を手動登録して委譲。§7 に明記）、(3) **カットオーバーは A案で確定**——新旧が同一アカウントのため `update-domain-association` で apex を含めサポート依頼なしに移動でき、TTL 短縮＋DNS 差し替えで窓は TTL 分のみ（B案はフォールバックとして保持）。§11 のステップ0を完了、§12 を「未決なし」に更新 |
 | 2026-08-30 | 第12版 | **リポジトリ名を実物に合わせて訂正**：`alp0007-aibee-lab` → **`alp007-aibee-lab`**（0が3つ。just47 の `alp006` に続く連番）。OIDC subject（`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev`）・state バケット名（`alp007-aibee-lab-tfstate-<env>-<account_id>`）・リソース命名 prefix・§11 に反映。CLAUDE.md も追随。§11 のリポジトリ作成タスクを完了に更新（develop ブランチへ初期構成を push 済み） |
+| 2026-08-30 | 第13版 | **dev 構築の下ごしらえを実施・記録**：dev の state バケット作成完了（`alp007-aibee-lab-tfstate-dev-127289506790`）。**immutable subject claims は無効と実測で確定**（`use_immutable_subject: false`）——信頼ポリシーは標準書式でよく、第2版で挙げた懸念は解消。将来有効化した場合に使う ID 入り書式（`repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730`）も §7 に記録した。§11 の進捗を更新 |
