@@ -54,7 +54,7 @@ git -C ../alp006-just47-portal archive HEAD | tar -x -C .reference/just47
   | 2026 | 自社アプリ事業「とりあえず47」を開始 ※アプリ公開後に「公開」へ差し替える |
 
 - ドメイン：**www.aibee-lab.jp を正**とし、apex（aibee-lab.jp）は www へ 301。dev は **dev.aibee-lab.jp**。just47 側の `NEXT_PUBLIC_OPERATOR_URL`（dev/prod）と一致する。
-- リポジトリ：Organization `aibee-lab-jp` のプライベートリポジトリ **`alp0007-aibee-lab`**（確定）。**just47 とは別リポ**。
+- リポジトリ：Organization `aibee-lab-jp` のプライベートリポジトリ **`alp007-aibee-lab`**（確定）。**just47 とは別リポ**。
 - **Terraform モジュールは共有化しない（決定）**：just47 の `infra/modules` をコピーし本リポで独立管理する。理由：2サイト規模で共有モジュールの版管理を持つコストが利得を上回る。見直す合図：3サイト目ができたとき、または両リポのモジュールに同じ修正を2回入れる経験が続いたとき。
 
 ## 2. ページ構成・技術スタック・環境変数
@@ -248,14 +248,14 @@ infra/
 - **【重要】ホストゾーンの扱いは dev と prod で異なる**（§9 ステップ0）：
   - **dev**：`dev.aibee-lab.jp` のゾーンを dev アカウントに**新規作成**（Terraform 管理）。NS 4本は prod アカウントの現行ゾーンへ**手作業で1回**登録して委譲する（Terraform はクロスアカウントで書けないため）。
   - **prod**：`aibee-lab.jp` のゾーンは**既に prod アカウントに存在し、WorkMail の MX を含む**。**新規作成せず `data "aws_route53_zone"` で参照**し、レコードのみ作成する（新規作成は NS の変更＝レジストラ変更＝メール断のリスクを招く）。ゾーン自体は Terraform 管理外の資源として扱う（§10 と同じ理屈）。変数でモジュールの挙動（作成／参照）を切り替える。
-- **state**：S3 backend ＋ S3 ネイティブ lockfile（`use_lockfile`。ロック用 DynamoDB は作らない）。接続値は環境別 `backend.hcl` を `init -backend-config` で渡す。state バケットは各アカウントに `alp0007-aibee-lab-tfstate-<env>-<account_id>` の流儀で新設。
+- **state**：S3 backend ＋ S3 ネイティブ lockfile（`use_lockfile`。ロック用 DynamoDB は作らない）。接続値は環境別 `backend.hcl` を `init -backend-config` で渡す。state バケットは各アカウントに `alp007-aibee-lab-tfstate-<env>-<account_id>` の流儀で新設。
 - **`terraform.tfvars` はコミットする**（`backend.hcl` も同様）。中身はドメイン名・メールアドレス・命名 prefix といった公開情報のみで、ignore すると複数マシン・CI で値が失われる実害の方が大きい。CI では checkout でファイルが存在し Terraform が自動読込する。**秘匿値は tfvars に書かない**——必要になったら Secrets Manager / SSM で管理し Terraform は参照のみ、変数・出力は `sensitive` を付ける（state には変数値が平文で残る性質は理解しておく）。
 - **唯一の例外：dev の Basic 認証の認証情報は tfvars に置く**。理由：(1) 保護対象が「未公開コンテンツを関係者以外に見せない」程度で被害が限定的、(2) CloudFront Functions は外部サービスを呼べず、値はどのみち関数コードに平文で載る（コンソールで読め state にも残る）ため、隠しても実効的な保護が増えない。**tfvars の該当箇所に例外である旨と理由をコメントで明記する**。例外を増やす場合も同様に理由を書き本書に記載する（無言で増やさない）。パスワードにコロンは使わない（Basic 認証の連結子のため）。
 
 **cicd（GitHub Actions 用 IAM）**
 
 - **OIDC プロバイダは作らない（§10 の共有資源・Terraform 管理外）**：1アカウントに同一 URL のプロバイダは1つしか持てず、複数プロジェクトが共有する。本リポは `data "aws_iam_openid_connect_provider"`（URL 指定）で参照し、**ロールのみ作成**する。dev アカウントには作成済み。prod アカウントは prod 構築前に CLI で作成する（コマンドは §10）。
-- **信頼ポリシーの sub は environment ベース**：ジョブが `environment:` を参照すると subject が `ref` ベースから `environment` ベースに変わるため、`repo:aibee-lab-jp/alp0007-aibee-lab:environment:dev` の形式で書く（`ref:refs/heads/...` で書くと認証が失敗する。just47 で実証済み）。**結果としてブランチ制限は GitHub Environments の Deployment branches が唯一の担保**になる（AWS 側では判定できない）。
+- **信頼ポリシーの sub は environment ベース**：ジョブが `environment:` を参照すると subject が `ref` ベースから `environment` ベースに変わるため、`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev` の形式で書く（`ref:refs/heads/...` で書くと認証が失敗する。just47 で実証済み）。**結果としてブランチ制限は GitHub Environments の Deployment branches が唯一の担保**になる（AWS 側では判定できない）。
 - **【本リポ固有の注意】immutable subject claims**：2026-07-15 以降に新規作成されたリポジトリは subject が `repo:owner@ID/repo@ID:...` の**ID 入り書式**になる見込み（just47 は既存リポのため標準書式）。本リポは新規作成なのでこの書式に該当する可能性が高い。**初回に実際の subject を確認してから信頼ポリシーを書くこと**（just47 の sub 文字列を写すと認証に失敗しうる）。
 - 権限は**サービス単位のワイルドカード**（`s3:* cloudfront:* lambda:* iam:* dynamodb:* ses:* route53:* acm:* logs:* sts:*`、Resource `*`）。Terraform は apply のたびに大量の Describe/Get/List を行いアクション単位の列挙が現実的でないため。守りは信頼ポリシー（repo＋environment 限定）と GitHub 側のブランチ制限が担う。dev で必要権限を実践的に確定し、その内容を prod にも適用する。
 
@@ -401,7 +401,7 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 ## 11. 残タスク
 
 0. ~~現状把握（§9 ステップ0）~~ …**完了（2026-08-30）**。結果と結論は §9 ステップ0 に記録
-1. リポジトリ作成（`alp0007-aibee-lab`）、リファレンス配置（§0）、state バケット作成、**初回セットアップ時に npm audit を棚卸しし本書へ記録、OIDC subject の実書式を確認**（§7 の immutable claims）。dev 構築と前後して just47 側の共有資源の state 除外（§10 反映事項1）を実施
+1. ~~リポジトリ作成（`alp007-aibee-lab`）~~ …**完了（2026-08-30。develop ブランチに初期構成〈仕様書・CLAUDE.md・ロゴ・.gitignore・.nvmrc・.env.example〉を push 済み）**。以降：リファレンス配置（§0）、state バケット作成、**初回セットアップ時に npm audit を棚卸しし本書へ記録、OIDC subject の実書式を確認**（§7 の immutable claims）。dev 構築と前後して just47 側の共有資源の state 除外（§10 反映事項1）を実施
 2. Claude Design でデザイン作成（ブリーフ＝`SITE_DESIGN_BRIEF.md` 第1版。IA・確定文言・ビジュアル方向を統合済み。SITEMAP.md／文言ドラフトは役目を終え削除可）
 3. dev 構築（§9 ステップ1）と実装（Claude Code）、dev で通し確認
 4. prod 構築（ステップ2）→ カットオーバー（ステップ3）→ 後始末・SES 申請（ステップ4）
@@ -417,7 +417,7 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 |---|---|---|
 | 2026-08-17 | 初版 | 検討結果を集約して起票：役割（運営元プロフィール／受注サイトにしない）、主語と語彙の規約、ヒーロー案1確定、沿革2021年起点、ページ構成、フォーム設置の決定、GA4 不採用、AWS アカウント共通・リポジトリ別・モジュール共有なし、SES identity 所有権、カットオーバー2案。just47 仕様書準拠部は参照方式（差分駆動）で記述 |
 | 2026-08-17 | 第2版 | **自己完結方式へ全面改訂**：差分駆動（「just47 §n 準拠」参照）を廃止。理由は (1) Claude Code が実装時に他リポの文書を読めず参照が規範として機能しない、(2) just47 側の改訂のたびに参照の生死を確認する運用が成立しない、(3) 両サイトは fork 後それぞれ独立に進化するため、仕様書の所有単位はコードの所有単位（モジュールをコピーして独立管理）と揃えるべき。just47 由来の実装知見のうち本サイトに効くものを結論＋理由ごと本文へ取り込み（§2 環境変数管理・§5 フォーム一式・§7 インフラ・§8 CI/CD）、出自注記は参照義務のない情報提供に格下げ。リポ間依存を「共有 AWS リソースの所有権」に限定し §10 を台帳化。**訂正**：OIDC プロバイダは「dev/prod とも just47 作成済み」ではなく、just47 の prod が未構築のため **prod は本リポが作成・所有**する（admin@ identity と同じ構図）。**追加**：本リポは 2026-07-15 以降の新規作成のため immutable subject claims（ID 入り subject）に該当する見込み——初回に実書式を確認してから信頼ポリシーを書く注意を §7 に記載 |
-| 2026-08-17 | 第3版 | **共有アカウント資源の方針を確定**（§10 を「共有アカウント資源の方針と台帳」に改題・原則新設）：複数プロジェクトが依存するアカウントレベル資源（OIDC プロバイダ・`admin@aibee-lab.jp` identity）は**どのリポの Terraform state にも入れず管理外とする**（state バケット方式）。理由は (1) 所有リポの destroy が他リポの CI を壊す構造の排除、(2)「先に作った方が所有」という偶然の非対称の排除、(3) state 移動（import）不要で移行最小、(4) 既存の state バケット運用と同一枠組み。第2版の「prod のプロバイダと admin@ は本リポが所有」を撤回。作成コマンドを §10 に記載し、just47 側の外し方（`removed` ブロック＋ `destroy = false` で CI 経路のまま state 除外）を反映事項に明記。§0・§5・§7・§9・§11 を追随。**確定事項の反映**：屋号の正式表記＝アイビーラボ（英語表記 Aibee Lab は補助）、リポジトリ名＝ `alp0007-aibee-lab`（ヒーロー文言・主語規約・OIDC sub 例・state バケット名・残タスクに反映し §12 から削除） |
+| 2026-08-17 | 第3版 | **共有アカウント資源の方針を確定**（§10 を「共有アカウント資源の方針と台帳」に改題・原則新設）：複数プロジェクトが依存するアカウントレベル資源（OIDC プロバイダ・`admin@aibee-lab.jp` identity）は**どのリポの Terraform state にも入れず管理外とする**（state バケット方式）。理由は (1) 所有リポの destroy が他リポの CI を壊す構造の排除、(2)「先に作った方が所有」という偶然の非対称の排除、(3) state 移動（import）不要で移行最小、(4) 既存の state バケット運用と同一枠組み。第2版の「prod のプロバイダと admin@ は本リポが所有」を撤回。作成コマンドを §10 に記載し、just47 側の外し方（`removed` ブロック＋ `destroy = false` で CI 経路のまま state 除外）を反映事項に明記。§0・§5・§7・§9・§11 を追随。**確定事項の反映**：屋号の正式表記＝アイビーラボ（英語表記 Aibee Lab は補助）、リポジトリ名＝ `alp007-aibee-lab`（ヒーロー文言・主語規約・OIDC sub 例・state バケット名・残タスクに反映し §12 から削除） |
 | 2026-08-17 | 第4版 | **参照実装の方針を追加**（§0）：just47 コードのスナップショットを `.reference/just47/`（gitignore 対象）に置き、Claude Code の参照・流用元とする。仕様書＝規範／リファレンス＝非規範（食い違いは仕様書が正）。`git archive` による取得と SNAPSHOT.txt での出自記録、tsconfig・ESLint からの除外、実装完了後は削除可。fork 方式・git submodule・マルチルート起動は理由を付して不採用。CLAUDE.md に流用ルールと差し替え必須の差分（GA4 等の持ち込み禁止、`PORTAL_URL` の向き、リソース命名、OIDC sub、フォーム文言、デザイン）を追記。§11 に配置タスクを追加 |
 | 2026-08-17 | 第5版 | サイトマップ（IA）作成に伴う追記（§2）：robots.txt / sitemap.xml を Metadata Routes（`app/robots.ts`・`app/sitemap.ts`）で生成（対象は3ページ。dev の非索引は配信層の X-Robots-Tag が担うため環境分岐なし）。**地図埋め込みは行わない決定**（外部スクリプト・Cookie が発生し Cookie 不使用の宣言と両立しないため。所在地はテキスト記載）。ページ・セクションの詳細構成は SITEMAP.md（ブリーフ統合までの中間文書）として起票 |
 | 2026-08-17 | 第6版 | 確定事項の反映：**ヘッダーナビは英語表記4項目（Services / Works / About Us / Contact）で確定**。「会社概要」を使わない語に追加（「会社」が法人格を連想させるため。§1 の語彙規約・§2 のページ表を更新、ページ上の見出しでも不使用）。**所在地確定**（〒221-0052 横浜クリエーションスクエア14階・建物名まで記載）。**連絡手段はフォームに一本化**——電話番号・メールアドレスはサイトに掲載しない（§1 に追加。必要な場面では admin@aibee-lab.jp）。詳細構成は SITEMAP.md に反映（フッターラベルは日本語のままの提案を追記） |
@@ -426,3 +426,4 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 | 2026-08-17 | 第9版 | 文言確定の完了：自社アプリ項の移植文を削除（「運営の姿勢」由来の記述はセクションごと完全削除で確定）。**`SITE_DESIGN_BRIEF.md` 第1版を作成**し、SITEMAP.md（IA）と文言ドラフトを統合——以後、構成・文言の正はブリーフ（両中間文書は統合済みマーク付きで役目終了）。ブリーフにビジュアル方向を起票：just47 中立アイデンティティと家族的類似（暖オフホワイト地・明朝見出しを共有）、差し色は別 hue の1色（ネイビー系候補・最終は Design）、モチーフなし、表の組版重視、モバイルファースト、ダークモード初版非対応。§11・§12 を更新 |
 | 2026-08-30 | 第10版 | 英字表記の正を **AiBee Lab** に変更（既存ロゴの表記に準拠。§1・冒頭を更新。© 表記など画面上の表記はブリーフ第2版で反映）。ロゴは新規作成ではなく**既存 SVG ロゴを活用する方針に変更**——詳細（サイトのヘッダーは単色インク版／favicon・OG は原色パネル版）はブリーフ §0・§7 が正 |
 | 2026-08-30 | 第11版 | **現状把握（§9 ステップ0）完了と、それに伴う移行設計の確定**：現行資産はすべて prod アカウント（Route53・CloudFront・S3・旧フォーム）、レジストラはバリュードメイン、メールは **AWS WorkMail**（MX＝`inbound-smtp.us-west-2`。SPF/DKIM/DMARC 無し。本プロジェクトでは一切触らない）。決定3点：(1) **ゾーン移管は不要・レジストラのネームサーバーは触らない**（メール断リスクを移行から排除）、(2) **prod の dns モジュールはゾーンを新規作成せず `data` 参照**しレコードのみ作成（dev は新規作成＋prod ゾーンへ NS 4本を手動登録して委譲。§7 に明記）、(3) **カットオーバーは A案で確定**——新旧が同一アカウントのため `update-domain-association` で apex を含めサポート依頼なしに移動でき、TTL 短縮＋DNS 差し替えで窓は TTL 分のみ（B案はフォールバックとして保持）。§11 のステップ0を完了、§12 を「未決なし」に更新 |
+| 2026-08-30 | 第12版 | **リポジトリ名を実物に合わせて訂正**：`alp0007-aibee-lab` → **`alp007-aibee-lab`**（0が3つ。just47 の `alp006` に続く連番）。OIDC subject（`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev`）・state バケット名（`alp007-aibee-lab-tfstate-<env>-<account_id>`）・リソース命名 prefix・§11 に反映。CLAUDE.md も追随。§11 のリポジトリ作成タスクを完了に更新（develop ブランチへ初期構成を push 済み） |

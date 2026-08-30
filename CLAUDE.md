@@ -31,6 +31,8 @@
 - `src/` … サイトコード（Next.js。`src/app`＝ルーティング、`src/components`・`src/lib` 等＝サイトコード）
 - `infra/` … Terraform（インフラ定義）
 - `docs/` … 仕様書
+- `public/` … 配信する静的ファイル（`aibee-lab-logo-ink.svg`＝ヘッダーのロゴ、`sw.js` 等）
+- `assets/brand/` … 配信しないブランド素材（`aibee-lab-logo.svg`＝ロゴ原版・濃色パネル `#22424d`。favicon / OG 画像のマスター）
 - `.reference/just47/` … 参照実装スナップショット（gitignore 対象。下記参照。存在しない場合もある）
 
 （just47 と異なり `content/` は存在しない。記事コンテンツを持たないため）
@@ -45,7 +47,7 @@
   - `content/`・markdown パイプライン・news / blog 関連は持ち込まない
   - 環境変数：just47 の `NEXT_PUBLIC_OPERATOR_URL`（aibee-lab を指す）に対し、本リポは **`NEXT_PUBLIC_PORTAL_URL`**（just47 を指す。**向きが逆**）
   - フォーム：just47 のカテゴリ選択は持ち込まない（本リポのフォームにカテゴリは無い。仕様書 §5）。文言・差出人表示名はブリーフの確定文言に差し替え
-  - リソース命名（DynamoDB テーブル・S3 バケット・prefix 等は `alp0007-aibee-lab` 系に）
+  - リソース命名（DynamoDB テーブル・S3 バケット・prefix 等は `alp007-aibee-lab` 系に）
   - OIDC の subject（リポジトリ名が異なる上、本リポは immutable subject claims の可能性。仕様書 §7）
   - デザインとページ構成（just47 の中立スタイル・古地図テーマ・ポータル構成を持ち込まない）
 - リファレンスが存在しない環境では仕様書のみで実装し、必要ならオーナーに配置を依頼する。
