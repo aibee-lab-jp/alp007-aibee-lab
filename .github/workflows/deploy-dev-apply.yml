@@ -1,0 +1,141 @@
+# dev デプロイ 2本目：最新の tfplan-dev artifact を自動特定して取得 → terraform apply → S3 同期 →
+# CloudFront invalidation。手動実行のみ。
+#
+# run ID の入力は取らない。理由：1本目冒頭で旧 artifact を削除するため `tfplan-dev` は常に1つ以下しか
+# 存在せず、対象は一意に定まる。代わりに、取得元の run ID とコミット SHA をログ／サマリに出力して
+# 「想定どおりのものを適用したか」を後から確認できるようにする（§8）。
+#
+# アクションのバージョン：Node 20 ランナーは 2026-09-16 に削除されるため node24 対応版を使う。
+# 上げ幅は `runs.using: node24` になる最も古いメジャーで、最新には追従しない（§8）。
+# ※ download-artifact は v8 にしない（digest 不一致の既定が error になる等、node24 と無関係な
+#   挙動変更で失敗が増えるため・§8）。
+name: deploy-dev-apply
+
+on:
+  workflow_dispatch: # 入力なし（最新の tfplan-dev を自動適用）
+
+# 最小権限（§8）。
+permissions:
+  contents: read # checkout
+  id-token: write # OIDC で AWS ロールを assume
+  actions: read # artifact 一覧の取得＋別 run からのダウンロード（どちらも actions: read）
+
+# plan と同じ group で直列化（apply 中に新しい plan/apply が交錯しないように）。
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      TF_PLAN_ARTIFACT: tfplan-dev
+      AWS_REGION: ap-northeast-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 1) 最新の tfplan-dev artifact を特定する。
+      #    公式 REST「List artifacts for a repository」は name クエリで絞り込め、各 artifact は
+      #    workflow_run.{id, head_sha} を持つ（run ID とコミット SHA の取得元）。sort パラメータは無いので
+      #    非 expired を created_at 降順にして先頭を採る（＝最新。通常 1件以下）。
+      #    見つからなければ明確に失敗させる（plan 未実行／失敗／適用後に削除済み の可能性）。
+      #    取得直後に run ID とコミット SHA をログと $GITHUB_STEP_SUMMARY に出す（apply 前に確認できる）。
+      - name: Resolve latest plan artifact
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          art=$(gh api "/repos/${{ github.repository }}/actions/artifacts?name=${TF_PLAN_ARTIFACT}&per_page=100" \
+            --jq "[.artifacts[] | select(.name==\"${TF_PLAN_ARTIFACT}\" and .expired==false)] | sort_by(.created_at) | reverse | .[0]")
+          if [ -z "$art" ] || [ "$art" = "null" ]; then
+            echo "::error::未適用の '${TF_PLAN_ARTIFACT}' artifact が見つかりません。1本目 deploy-dev-plan がまだ成功していない／plan が失敗している／既に適用され次の plan 実行で削除された、のいずれかの可能性があります。"
+            exit 1
+          fi
+          run_id=$(echo "$art" | jq -r '.workflow_run.id')
+          head_sha=$(echo "$art" | jq -r '.workflow_run.head_sha')
+          head_branch=$(echo "$art" | jq -r '.workflow_run.head_branch')
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "適用対象 plan → run ID=$run_id / commit=$head_sha / branch=$head_branch"
+          {
+            echo "## dev apply：plan 情報"
+            echo ""
+            echo "- 取得元 run ID: \`$run_id\`"
+            echo "- コミット SHA: \`$head_sha\`"
+            echo "- ブランチ: \`$head_branch\`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 2) 特定した run から artifact をダウンロード（別 run のため run-id＋github-token が必須）。
+      #    path: . でリポジトリ相対の構造（tfplan / .terraform-artifacts / .open-next）を復元する。
+      - name: Download plan artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.TF_PLAN_ARTIFACT }}
+          run-id: ${{ steps.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .
+
+      # 3) OIDC で AWS 認証（1本目と同じロール・リージョン）。
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-dev-apply
+
+      # 4) Terraform 1.15.7（1本目と揃える）。wrapper 無効で output を素直に取れるように。
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.7
+          terraform_wrapper: false
+
+      # provider プラグインと backend の初期化は apply 側でも必要。
+      - name: Terraform init
+        working-directory: infra/environments/dev
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      # 5) 保存した plan をそのまま適用する（引数なし apply で再 plan させない＝確認内容と適用内容を一致させる）。
+      #    1本目と2本目の間に state が進んで Terraform が古い plan を拒否したら、そのまま失敗させる（正しい挙動）。
+      - name: Terraform apply (saved plan)
+        working-directory: infra/environments/dev
+        run: terraform apply -input=false tfplan
+
+      # 6) 静的アセットを S3 に同期（バケット名は output から。ハードコードしない）。
+      #    .open-next は artifact で復元済み（リポジトリ直下）。dev から見て3つ上。
+      #    【本リポの暫定措置】hosting モジュールが未導入の間は参照する output が存在しないため、
+      #    値が取れなければスキップする（hosting を apply した時点で自動的に動き出す）。
+      #    hosting 追加時に、sync 元／先のパスを hosting の asset_sync_commands 出力（§7）と
+      #    突き合わせて確定させること。
+      - name: Sync assets to S3
+        working-directory: infra/environments/dev
+        run: |
+          set -o pipefail
+          BUCKET=$(terraform output -raw assets_bucket_name 2>/dev/null || true)
+          if [ -z "$BUCKET" ]; then
+            echo "::notice::hosting 未導入（output assets_bucket_name 無し）のため S3 同期をスキップしました。"
+            exit 0
+          fi
+          echo "Syncing .open-next to s3://$BUCKET"
+          aws s3 sync ../../../.open-next/assets "s3://$BUCKET/_assets" --delete
+          aws s3 sync ../../../.open-next/cache  "s3://$BUCKET/_cache"  --delete
+
+      # 7) CloudFront invalidation（distribution ID は output から）。
+      #    上と同じ理由で、hosting 未導入の間はスキップする。
+      - name: CloudFront invalidation
+        working-directory: infra/environments/dev
+        run: |
+          set -o pipefail
+          DIST=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || true)
+          if [ -z "$DIST" ]; then
+            echo "::notice::hosting 未導入（output cloudfront_distribution_id 無し）のため invalidation をスキップしました。"
+            exit 0
+          fi
+          echo "Invalidating CloudFront distribution $DIST"
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*"
+
+      # 注：artifact の削除はしない。次回 plan（1本目）の冒頭で消える。適用済み plan が残っても、
+      #    再適用しようとすれば state 差異で Terraform が拒否するため誤適用にはならない（§8）。

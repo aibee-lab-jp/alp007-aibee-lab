@@ -1,0 +1,216 @@
+# dev デプロイ 1本目：ビルド → terraform plan → plan を artifact 保存（apply はしない）。
+# 承認機能（required reviewers）はプライベートリポジトリでは Enterprise 限定で使えないため、
+# plan と apply を2本に分け、「人がログで plan を確認してから apply を手動実行する」規律で代替する（§8）。
+#
+# アクションのバージョン：Node 20 ランナーは 2026-09-16 に削除されるため node24 対応版を使う。
+# 上げ幅は `runs.using: node24` になる最も古いメジャーで、最新には追従しない（§8）。
+name: deploy-dev-plan
+
+on:
+  push:
+    branches: [develop]
+    # ワークフローだけの変更では起動しない（成果物を変えないため）。検証は workflow_dispatch で行う。
+    paths-ignore:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+# 最小権限（§8）。
+permissions:
+  contents: read # checkout
+  id-token: write # OIDC で AWS ロールを assume
+  actions: write # 既存の同名 artifact を削除（DELETE artifact API）。read も包含し一覧取得に使う
+
+# plan と apply（同じ group）を直列化し、デプロイ系の交錯を防ぐ。
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    # Linux 必須：sharp の linux-arm64 バイナリを得るため（macOS だと darwin 版で image Lambda が動かない・§7）。
+    runs-on: ubuntu-latest
+    # Environments の Variables 参照＋Deployment branches 制限（develop のみ）を効かせる。
+    # これにより OIDC subject が environment ベースになる（§7 の信頼ポリシーと対応）。
+    environment: dev
+    env:
+      TF_PLAN_ARTIFACT: tfplan-dev
+      AWS_REGION: ap-northeast-1
+    steps:
+      # 1) 未適用の plan が複数並ばないよう、既存の同名 artifact を先に削除（常に「未適用 plan は1つ以下」）。
+      #    名前フィルタは API の name パラメータに依存せず jq で client-side に絞る（互換性のため）。
+      - name: Delete previous plan artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          ids=$(gh api --paginate "/repos/${{ github.repository }}/actions/artifacts" \
+            --jq ".artifacts[] | select(.name==\"${TF_PLAN_ARTIFACT}\") | .id")
+          if [ -z "$ids" ]; then
+            echo "No previous '${TF_PLAN_ARTIFACT}' artifact to delete."
+          fi
+          for id in $ids; do
+            echo "Deleting old artifact id=$id"
+            gh api -X DELETE "/repos/${{ github.repository }}/actions/artifacts/$id"
+          done
+
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 2) Node 24（.nvmrc）＋ npm（package-lock.json）。
+      #    【本リポの暫定措置】サイト実装（package.json / package-lock.json）が入るまで、
+      #    Node・依存インストール・ビルドの3ステップは条件付きで飛ばす。lock ファイルが現れた時点で
+      #    自動的に有効になる（ワークフローの編集は不要）。実装が入ったら条件は外してよい。
+      - name: Setup Node
+        if: hashFiles('package-lock.json') != ''
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        if: hashFiles('package-lock.json') != ''
+        run: npm ci
+
+      # 3) OIDC で AWS 認証（ロール ARN は Variable。**GitHub に置くのはこれだけ**・§2）。
+      #    ビルドより前に置く：ビルド時の NEXT_PUBLIC_* を terraform output から取るため（下の 5）。
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-dev-plan
+
+      # 4) Terraform 1.15.7。wrapper 無効＝`terraform output -raw` を素直に取れるようにする。
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.7
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/environments/dev
+        run: terraform init -backend-config=backend.hcl -input=false
+
+      # 5) ビルド時設定（NEXT_PUBLIC_*）を Terraform から取得する（§2：Terraform が唯一の情報源。
+      #    GitHub Variables には置かない）。$GITHUB_ENV に流し込み、後続ステップの環境変数にする。
+      #    ※ $GITHUB_ENV を選んだ理由：値が複数あり、ビルドステップの env: に個別に書き写すと
+      #      「output 名と環境変数名の対応表」が2箇所（ここと env:）に散る。ここで1回だけ対応付ける。
+      #
+      #    【取得方法：output → console のフォールバック】
+      #    `terraform output` は **state に保存済みの値**しか返さない。新しく追加した output は
+      #    apply するまで state に入らないため、output を追加した最初の実行では取得できない
+      #    （このジョブは plan までで apply しない＝鶏と卵になる）。
+      #    そこで、まず `terraform output -raw` を試し、無ければ `terraform console` で
+      #    **設定（tfvars）から直接評価**する。console は state に依存しないので初回でも通る。
+      #    どちらも同じ terraform.tfvars を情報源にするため値は一致する（§2 の「情報源は1つ」を満たす）。
+      #    ※ 本サイトは GA4 を導入しないため、測定 ID の受け渡しは無い（§2・§6）。3件とも必須。
+      - name: Load app config from Terraform
+        working-directory: infra/environments/dev
+        run: |
+          set -o pipefail
+
+          # output（state）→ console（設定）の順で解決する。
+          resolve() {
+            local out="$1" expr="$2" v
+            if v="$(terraform output -raw "$out" 2>/dev/null)" && [ -n "$v" ]; then
+              printf '%s' "$v"; return 0
+            fi
+            # console は JSON 文字列（クォート付き）で返るので jq -r で外す。
+            v="$(printf '%s\n' "$expr" | terraform console 2>/dev/null | tail -n 1 | jq -r '.' 2>/dev/null)" || v=""
+            printf '%s' "$v"
+          }
+
+          set_required() {  # $1=環境変数名 $2=output 名 $3=console 式
+            local value; value="$(resolve "$2" "$3")"
+            if [ -z "$value" ] || [ "$value" = "null" ]; then
+              echo "::error::$1 の値を Terraform から取得できません（output '$2' も設定の評価も空）。terraform.tfvars を確認してください。"
+              exit 1
+            fi
+            echo "$1=$value" >> "$GITHUB_ENV"
+            echo "  $1 <- $2"
+          }
+
+          set_required NEXT_PUBLIC_SITE_URL   app_site_url   '"https://${var.site_domain}"'
+          set_required NEXT_PUBLIC_PORTAL_URL app_portal_url 'var.portal_url'
+          set_required NEXT_PUBLIC_ENV        app_env        'var.environment'
+
+      # 6) ビルド。NEXT_PUBLIC_* は上のステップが $GITHUB_ENV に入れた値を使う
+      #    （src/lib/env.ts は必須変数の欠落時にビルドを失敗させる）。
+      #
+      #    【`npm run build` を別途走らせない理由】`open-next build` は**内部で `npm run build`
+      #    （= next build）を実行する**（@opennextjs/aws の build/buildNextApp.js が execSync で
+      #    packager に応じたビルドコマンドを呼ぶ）。両方書くと同じビルドが2回走り、時間が倍かかるうえ
+      #    Google Fonts の取得など外部依存の失敗機会も倍になる。しかも 1回目は捨てられる：open-next は
+      #    next build の前に NEXT_PRIVATE_STANDALONE=true を立てるため、standalone 無しで作られた
+      #    1回目の出力は使われない。→ `npx open-next build` だけで .next と .open-next の両方が揃う。
+      - name: Build (open-next; runs next build internally)
+        if: hashFiles('package-lock.json') != ''
+        run: npx open-next build
+
+      # 7) plan。tfvars はコミット済みで、checkout により存在するため Terraform が自動読み込みする
+      #    （§7：非機微な環境設定値は tfvars で与える）。→ TF_VAR_* の受け渡しは不要。
+      #    差分有無は英語メッセージの grep ではなく -detailed-exitcode で判定（公式・堅牢・ロケール非依存）。
+      #    0=差分なし / 2=差分あり / 1=エラー。GitHub の bash は既定で set -eo pipefail のため、
+      #    exit 2 でステップが落ちないよう plan の間だけ errexit を外し、PIPESTATUS[0] で terraform の
+      #    実際の exit code を取る（tee を挟んでもログ出力と両立させる）。
+      - name: Terraform plan
+        working-directory: infra/environments/dev
+        run: |
+          set +e
+          terraform plan -out=tfplan -input=false -no-color -detailed-exitcode | tee plan.log
+          code=${PIPESTATUS[0]}
+          set -e
+          case "$code" in
+            0) echo "PLAN_RESULT=no-changes" >> "$GITHUB_ENV" ;;
+            2) echo "PLAN_RESULT=changes"    >> "$GITHUB_ENV" ;;
+            *) echo "terraform plan failed (exit code $code)"; exit 1 ;;
+          esac
+
+      # 8) apply に必要な成果物を artifact に保存（2本目は別ランナーのため引き継ぎが必須）：
+      #    - infra/environments/dev/tfplan … 保存 plan（2本目はこれをそのまま apply する）
+      #    - infra/modules/hosting/.terraform-artifacts/ … Lambda コードの zip（archive_file が plan 時に生成。
+      #      apply 時に Lambda の filename として読むため実体が必要。無いと apply が失敗する）
+      #    - .open-next/ … apply 後の aws s3 sync（assets/cache）に必要
+      #    ※ .open-next / .terraform-artifacts はドット始まりのため include-hidden-files: true が必須。
+      #
+      #    【本リポの暫定措置：.nvmrc を1件含める】upload-artifact は「マッチしたファイルの共通の親」を
+      #    artifact のルートにする。hosting とサイト実装が入るまで下2つのパスは存在せず、tfplan だけが
+      #    マッチするとルートが infra/environments/dev になり、2本目の `path: .` 復元が壊れる
+      #    （tfplan がリポジトリ直下に落ちる）。常に存在するリポジトリ直下のファイルを1件混ぜて
+      #    ルートをリポジトリ直下に固定する。hosting とサイト実装が揃えば不要になるので、その時点で外してよい。
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.TF_PLAN_ARTIFACT }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+          path: |
+            infra/environments/dev/tfplan
+            infra/modules/hosting/.terraform-artifacts/
+            .open-next/
+            .nvmrc
+
+      # 9) plan の差分有無と、この実行の run ID をジョブサマリに出す。
+      #    run ID は 2本目の入力用ではなく（apply は入力を取らず最新 tfplan-dev を自動適用する）、
+      #    識別・照合用：2本目 deploy-dev-apply のサマリに出る「取得元 run ID」と突き合わせて、
+      #    意図した plan が適用されたかを確認するため。差分なしなら apply 不要と判断できる。
+      - name: Job summary
+        run: |
+          {
+            echo "## dev plan 完了"
+            echo ""
+            echo "**run ID（照合用）:**"
+            echo ""
+            echo '```'
+            echo "${{ github.run_id }}"
+            echo '```'
+            echo ""
+            echo "> deploy-dev-apply サマリーの「取得元 run ID」に反映。"
+            echo ""
+            if [ "${PLAN_RESULT}" = "no-changes" ]; then
+              echo "> plan 差分: **No changes**（インフラは構成と一致）。apply は不要（実行しても no-op）。"
+            else
+              echo "> plan 差分: **変更あり**。ログで内容を確認し、問題なければ \`deploy-dev-apply\` を手動実行（入力不要。この plan が自動適用）。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

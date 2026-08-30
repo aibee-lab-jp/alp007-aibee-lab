@@ -16,3 +16,25 @@ module "cicd" {
   # dev/prod で変わらない値なので tfvars ではなくここに置く（tfvars が持つのは環境差だけ。§7）。
   github_repository = "aibee-lab-jp/alp007-aibee-lab"
 }
+
+# DNS：dev.aibee-lab.jp のホストゾーン（新規作成）＋ACM 証明書（us-east-1）＋DNS 検証（§7）。
+# ACM は CloudFront 用に us-east-1 必須のため、既定 aws（Route53）に加えて us-east-1 エイリアスを渡す
+# （モジュール側は configuration_aliases = [aws.us_east_1] で受ける）。
+# この段階では CloudFront が無いため、ゾーンと証明書までで完結する（A/AAAA は hosting の担当。§7）。
+module "dns" {
+  source = "../../modules/dns"
+
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  zone_name   = var.dns_zone_name
+  create_zone = var.dns_create_zone
+
+  certificate_domain_name               = var.site_domain
+  certificate_subject_alternative_names = var.certificate_subject_alternative_names
+
+  name_prefix = var.name_prefix
+  environment = var.environment
+}
