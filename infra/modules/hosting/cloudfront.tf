@@ -139,6 +139,18 @@ locals {
   # （noindex は response_headers_policy_id=null、basic 認証は dynamic function_association 未生成）。
   noindex_policy_id       = one(aws_cloudfront_response_headers_policy.noindex[*].id)
   basic_auth_function_arn = one(aws_cloudfront_function.basic_auth[*].arn)
+
+  # public/ 直下に置いた静的ファイルを S3 オリジンへ向けるパスパターン（理由は下の behavior のコメント）。
+  # 種類を増やすときはここに1行足す（例：動画を置くなら "*.mp4"）。
+  # ※ "/favicon.ico" は "*.ico" が受けるため、個別の behavior は持たない。
+  static_file_patterns = [
+    "*.svg",
+    "*.png",
+    "*.jpg",
+    "*.webp",
+    "*.ico",
+    "*.webmanifest",
+  ]
 }
 
 # ---- ディストリビューション -------------------------------------------
@@ -295,27 +307,7 @@ resource "aws_cloudfront_distribution" "this" {
     }
   }
 
-  # #5 favicon.ico → S3
-  ordered_cache_behavior {
-    path_pattern               = "favicon.ico"
-    target_origin_id           = "s3"
-    viewer_protocol_policy     = "redirect-to-https"
-    allowed_methods            = ["GET", "HEAD"]
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
-    response_headers_policy_id = local.noindex_policy_id
-
-    dynamic "function_association" {
-      for_each = local.basic_auth_function_arn == null ? [] : [1]
-      content {
-        event_type   = "viewer-request"
-        function_arn = local.basic_auth_function_arn
-      }
-    }
-  }
-
-  # #6 sw.js → S3（public/sw.js が _assets/sw.js として配信される。favicon.ico と同じベア表記）。
+  # #5 sw.js → S3（public/sw.js が _assets/sw.js として配信される）。
   # ただしキャッシュは CachingOptimized（長期）ではなく **CachingDisabled**（§5）。
   # 理由：Service Worker スクリプトは更新が速やかに届く必要がある。長期キャッシュだと CloudFront が
   # 旧 sw.js を返し続け、ブラウザの SW 更新チェック（登録側は updateViaCache:"none"）が
@@ -335,6 +327,51 @@ resource "aws_cloudfront_distribution" "this" {
       content {
         event_type   = "viewer-request"
         function_arn = local.basic_auth_function_arn
+      }
+    }
+  }
+
+  # #6〜 public/ 直下の静的ファイル → S3（拡張子ワイルドカード）。
+  # public/ のファイルは OpenNext が .open-next/assets/ 直下へ写し、CI の sync で
+  # s3://<bucket>/_assets/ に入る。S3 オリジンは origin_path=/_assets のため、ここに来た
+  # リクエストはそのまま対応するオブジェクトに解決される。
+  #
+  # 【なぜ拡張子ワイルドカードなのか】CloudFront のパスパターンは「前方一致（dir/*）」か
+  # 「*.拡張子」しか書けず、「/_next 以外のすべて」のような否定は書けない。public/ のファイルは
+  # **ルート直下の任意の名前**で配信される（favicon.ico・og.png・ロゴ SVG・webmanifest 等は
+  # 慣習上ルートに置く必要があり、サブディレクトリへ移す方式は採れない）ため、種類（拡張子）で受ける。
+  # パターンを1つ足せば新しい種類に対応できる＝OG 画像や favicon 一式の追加で Terraform を
+  # 触らずに済む（同じ拡張子なら追加不要）。
+  #
+  # 【.txt / .xml を入れてはならない】/robots.txt と /sitemap.xml は Next の Metadata Routes が
+  # 生成するルートで、S3 には存在せず server Lambda が返す（§2）。ここに入れると 404 になる。
+  # 【.js も入れない】JS/CSS のバンドルは _next/* が受け持ち、public/ の JS は sw.js のみで、
+  # これは上の #5（キャッシュ無効）が先に一致する必要がある（§5）。
+  # 【将来の注意】app/opengraph-image.tsx のような**動的生成**の画像ルートを導入すると、
+  # 拡張子が一致して S3 に流れ 404 になる。導入時はこのリストと配信経路を見直すこと。
+  #
+  # キャッシュは _next/* と同じ CachingOptimized。ただし public/ のファイル名は
+  # 内容ハッシュを持たない（差し替えても URL が変わらない）ため、更新は毎回のデプロイで行う
+  # CloudFront invalidation（CI の apply 手順・§8）に依存する。
+  dynamic "ordered_cache_behavior" {
+    for_each = local.static_file_patterns
+
+    content {
+      path_pattern               = ordered_cache_behavior.value
+      target_origin_id           = "s3"
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+      response_headers_policy_id = local.noindex_policy_id
+
+      dynamic "function_association" {
+        for_each = local.basic_auth_function_arn == null ? [] : [1]
+        content {
+          event_type   = "viewer-request"
+          function_arn = local.basic_auth_function_arn
+        }
       }
     }
   }
