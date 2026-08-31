@@ -88,7 +88,14 @@ git -C ../alp006-just47-portal archive HEAD | tar -x -C .reference/just47
 
 - **バージョン方針**：Next.js 16 採用（15 はサポートが短命なため。16 は Active LTS）。**パッチバージョンは `package.json` で完全固定**（キャレット無し）。更新は意図的に行い、そのつど本書に記録する。初期バージョンは just47 で確定済みの一式（next 16.2.11、@opennextjs/aws 4.0.3 ほか）を採用する。@opennextjs/aws を上げる際は peerDeps の下限により next と同時更新になる点に注意。
 - **Node 24 の根拠**：nodejs20.x は 2026-04-30 に Phase 1 非推奨（関数作成ブロックは 2026-08-31）。nodejs24.x は現行サポート（EOL 2028-04）で、ローカル・CI・Lambda を一致させる。
-- **npm audit の方針**：初回セットアップ時に本リポで棚卸しし、受け入れる指摘は「理由＋見直す合図」付きで本書に記録する。判断の枠組み：修正版が存在しない／ビルド時ツールのみで実行時に外部入力を受けない／Lambda 上の実体が別系統（§7 の sharp）——のいずれかに該当すれば理由をもって受け入れる。just47 と同じ依存構成のため、同種の指摘（brace-expansion・postcss・sharp）が出る見込み。
+- **npm audit の方針と初回棚卸しの結果（2026-08-31 実施）**：判断の枠組みは「修正版が存在しない／ビルド時ツールのみで実行時に外部入力を受けない／Lambda 上の実体が別系統（§7 の sharp）」のいずれかに該当すれば理由をもって受け入れる。初回の指摘は 3 high で、いずれも受け入れとした：
+
+  | 指摘 | 判断 | 見直す合図 |
+  |---|---|---|
+  | postcss ≤8.5.22（next の依存・advisory 4件） | ビルド時ツールのみで、実行時に外部入力の CSS を処理しない → 受け入れ | next を上げるとき（16.3.3 で解消） |
+  | sharp <0.35.0（libvips CVE） | Lambda 上の実体は OpenNext が別途 install する系統で lockfile 管理外（§7）。`remotePatterns` 未設定のため `/_next/image` は自サイトの画像しか処理せず、突く経路がない → 受け入れ | `remotePatterns` を設定するとき |
+
+  `npm audit fix --force` は next 16.3.3 への更新＝パッチ完全固定の方針から外れるため実行しない。
 
 **環境変数の管理場所（原則・例外なし）**
 
@@ -256,8 +263,23 @@ infra/
 
 - **OIDC プロバイダは作らない（§10 の共有資源・Terraform 管理外）**：1アカウントに同一 URL のプロバイダは1つしか持てず、複数プロジェクトが共有する。本リポは `data "aws_iam_openid_connect_provider"`（URL 指定）で参照し、**ロールのみ作成**する。dev アカウントには作成済み。prod アカウントは prod 構築前に CLI で作成する（コマンドは §10）。
 - **信頼ポリシーの sub は environment ベース**：ジョブが `environment:` を参照すると subject が `ref` ベースから `environment` ベースに変わるため、`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev` の形式で書く（`ref:refs/heads/...` で書くと認証が失敗する。just47 で実証済み）。**結果としてブランチ制限は GitHub Environments の Deployment branches が唯一の担保**になる（AWS 側では判定できない）。
-- **【本リポ固有の確認結果】immutable subject claims は無効（2026-08-30 実測）**：`GET /repos/aibee-lab-jp/alp007-aibee-lab/actions/oidc/customization/sub` が `use_default: true` / `use_immutable_subject: false` を返したため、**subject は just47 と同じ標準書式**（`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev`）で書いてよい。2026-07-15 以降の新規リポジトリでも自動適用はされていなかった。
-  - 参考：同 API は `sub_claim_prefix` として ID 入り書式 `repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730` を返す。**将来 immutable subject を有効化した場合はこの prefix に切り替わる**ため、そのときは信頼ポリシーを `repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730:environment:dev` の形に直す（値は上記 API で再確認できる）。
+- **【本リポ固有・実測で確定】subject は ID 入りの immutable 書式が必要（2026-08-30）**：信頼ポリシーの sub は以下でなければ認証が通らない。
+
+  ```
+  repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730:environment:dev
+  ```
+
+  - 経緯と教訓：`GET /repos/aibee-lab-jp/alp007-aibee-lab/actions/oidc/customization/sub` は `use_default: true` / `use_immutable_subject: false` を返すが、**これは「リポジトリ独自のカスタマイズをしていない」という意味であり、発行されるトークンの書式が標準書式であることを意味しない**。実際の書式は同レスポンスの **`sub_claim_prefix`** が示す（本リポでは ID 入り）。この読み違いで標準書式を書き、CI の初回実行が `Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗した。
+  - **確実な確認方法は CloudTrail**：失敗した `AssumeRoleWithWebIdentity` イベントの `userIdentity.userName` に、GitHub が実際に名乗った sub がそのまま入っている。書式で迷ったらここを見る。
+
+    ```
+    aws cloudtrail lookup-events \
+      --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithWebIdentity \
+      --max-results 5 --query 'Events[].CloudTrailEvent' --output text
+    ```
+
+  - 実装上は環境ルートの `github_repository` に ID 入りの値（`aibee-lab-jp@198689698/alp007-aibee-lab@1337691730`）を渡すだけでよい（モジュール側は `repo:${var.github_repository}:environment:${var.environment}` で組み立てるため）。
+  - **この修正だけは手元 apply で当てる**（CI が認証できない状態では CI 経由で直せないため。§8 の例外に該当）。`terraform apply -target=module.cicd` で cicd に限定する。
 - 権限は**サービス単位のワイルドカード**（`s3:* cloudfront:* lambda:* iam:* dynamodb:* ses:* route53:* acm:* logs:* sts:*`、Resource `*`）。Terraform は apply のたびに大量の Describe/Get/List を行いアクション単位の列挙が現実的でないため。守りは信頼ポリシー（repo＋environment 限定）と GitHub 側のブランチ制限が担う。dev で必要権限を実践的に確定し、その内容を prod にも適用する。
 
 **hosting の CloudFront まわり**
@@ -269,7 +291,12 @@ infra/
   - 既知の懸念：SW 経由の POST に Basic 認証の `Authorization` が付かない可能性（Firefox に未解決の不具合報告あり。Chrome 系では just47 で問題なく通過を確認済み）。dev 限定の仕組みのため、問題が出たら Server Action の behavior だけ認証から除外するか一時無効化で足りる。
 - **Lambda Function URL の権限（重要）**：server/image とも `authorization_type=AWS_IAM`、CloudFront は OAC（type=lambda / sigv4 / always）で署名し Function URL は公開しない。**2025年10月以降に作成された Function URL は、リソースベースポリシーに `lambda:InvokeFunctionUrl` と `lambda:InvokeFunction` の両方が必要**（片方だけだと 403 になり CloudWatch にログすら出ない）。`aws_lambda_permission` を関数ごとに2本付与する。
 - **SES の IAM 権限**：`ses:SendEmail` の Resource は `arn:aws:ses:<region>:<account>:identity/*`（region/account はデータソースから組み立てる）。送信元ドメイン ID だけに限定すると **SES は宛先側 identity にも認可チェックを行うため AccessDeniedException** になる。prod のサンドボックス解除後は絞り直しを再検討。
-- **S3 アセット投入**：assets/cache は数百ファイルのビルド成果物のため `aws s3 sync` で投入（CI の独立ステップ）。hosting の outputs に sync コマンドを出力する。
+- **`public/` の静的ファイルは拡張子ワイルドカードの behavior で S3 に向ける**。OpenNext の出力記述子は `public/` 直下のファイルごとに behavior を列挙するが、それを写すとファイルを追加するたびに Terraform の変更が要る。実際、ロゴ SVG が既定 behavior（server Lambda）へ流れて 404 になった（2026-08-31）。CloudFront のパスパターンは前方一致か `*.拡張子` のみで否定を書けず、favicon 一式・OG 画像・`/favicon.ico` はルート直下に置く必要があるため、サブディレクトリへ集約する方式は採らない。**採用：`*.svg` `*.png` `*.jpg` `*.webp` `*.ico` `*.webmanifest` を S3 へ向ける**（種類を増やすときはリストに1行足す）。
+  - **`*.txt` / `*.xml` は入れない**：`/robots.txt`・`/sitemap.xml` は Next の Metadata Routes が生成し server Lambda が返す（§2）ため、S3 へ向けると 404 になる。**`*.js` も入れない**：`public/` の JS は `sw.js` のみで、キャッシュ無効の個別 behavior（§5）が先に一致する必要がある。
+  - キャッシュは `_next/*` と同じ CachingOptimized。ただし `public/` のファイル名は内容ハッシュを持たないため、差し替えの反映はデプロイ時の invalidation（§8）に依存する。
+  - 新しい behavior にも **noindex ポリシーと Basic 認証 Function を必ず割り当てる**（割り当てのない behavior は素通りするため）。
+  - 将来 `app/opengraph-image.tsx` のような動的生成の画像ルートを導入する場合は、拡張子が一致して S3 へ流れるため、この方式を見直すこと。
+- **S3 アセット投入**：assets/cache は数百ファイルのビルド成果物のため `aws s3 sync` で投入（CI の独立ステップ）。hosting の outputs に sync コマンドを出力する。同期先は `_assets` / `_cache` プレフィックス（S3 オリジンの `origin_path` が `/_assets`）。
 
 **sharp は2系統ある（画像最適化の前提知識）**
 
@@ -305,6 +332,7 @@ infra/
 2. checkout → Node（`.nvmrc`）→ 依存インストール → **AWS 認証 → `terraform init` → `terraform output` でビルド用環境変数を取得し `$GITHUB_ENV` へ**（初回は console フォールバック。§2）→ **`npx open-next build`**。**Linux ランナー必須**（sharp の linux-arm64 を得るため）。
 3. `terraform plan -out=tfplan`。差分の有無は **`-detailed-exitcode`** で判定（0＝差分なし／2＝あり／1＝エラー。plan の間だけ `set +e` にし `${PIPESTATUS[0]}` で取得——`tee` によるログ出力と両立させるため）。
 4. artifact に **tfplan／Lambda の zip／`.open-next/`** を保存。zip が必須なのは、保存 plan の apply でも**apply 時に zip の実体を読んでアップロードする**ため（別ランナーに実体が無いと失敗する）。`.open-next/` はドット始まりのため `include-hidden-files: true`。`.terraform/` は含めない（2本目で init し直す）。
+   - **【実装知見】artifact のルートがずれる問題**：`upload-artifact` は「マッチしたファイルの共通の親」を artifact のルートにするため、指定パスの一部が存在しないと構造が変わり、apply 側の復元（`path: .`）が壊れる。サイト実装が入る前は tfplan しかマッチせずルートが `infra/environments/dev` にずれた。対処として、常に存在するリポジトリ直下のファイル（`.nvmrc`）をパスに1件混ぜてルートを固定している。全パスが常に存在するようになれば不要。
 5. ジョブサマリに run ID と差分の有無を出力（2本目の取得元 run ID と突き合わせて照合するため）。
 
 **2本目（apply・手動実行、入力なし）**
@@ -407,10 +435,14 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
    - dev の state バケット作成…**完了（2026-08-30）**。`alp007-aibee-lab-tfstate-dev-127289506790`（バージョニング・SSE-S3・パブリックアクセス全ブロック）
    - OIDC subject の実書式確認…**完了（2026-08-30）**。標準書式でよい（§7）
    - 残り：**初回セットアップ時に npm audit を棚卸しし本書へ記録**。dev 構築と前後して just47 側の共有資源の state 除外（§10 反映事項1）を実施
-2. Claude Design でデザイン作成（ブリーフ＝`SITE_DESIGN_BRIEF.md` 第1版。IA・確定文言・ビジュアル方向を統合済み。SITEMAP.md／文言ドラフトは役目を終え削除可）
-3. dev 構築（§9 ステップ1）と実装（Claude Code）、dev で通し確認
+2. ~~Claude Design でデザイン作成~~ …**完了（2026-08-30。4ページ・文言照合済み。ブリーフ第3版）**
+3. ~~dev 構築（§9 ステップ1）と実装（Claude Code）、dev で通し確認~~ …**完了（2026-08-31）**
+   - 全モジュール（cicd / dns / hosting / contact）を apply。CI（plan → apply）が通しで稼働
+   - dev.aibee-lab.jp が Basic 認証つきで配信。ロゴ・4ページとも表示を確認
+   - **フォームの通し確認済み**：SW 経由の POST・DynamoDB 保存・SES 2通（確認／通知）・`CloudFront-Viewer-Address` の到達（レート制限テーブルに `ipHash` の記録を確認）・**1分に4件目の拒否**まで実機確認
 4. prod 構築（ステップ2）→ カットオーバー（ステップ3）→ 後始末・SES 申請（ステップ4）
 5. §10 の just47 仕様書反映
+6. 残作業（軽微）：OG 画像（`public/og.png`）と favicon の作成・配置、privacy 制定日の実日付記入（公開日）
 
 ## 12. 未決事項
 
@@ -433,3 +465,4 @@ aws sesv2 create-email-identity --email-identity admin@aibee-lab.jp
 | 2026-08-30 | 第11版 | **現状把握（§9 ステップ0）完了と、それに伴う移行設計の確定**：現行資産はすべて prod アカウント（Route53・CloudFront・S3・旧フォーム）、レジストラはバリュードメイン、メールは **AWS WorkMail**（MX＝`inbound-smtp.us-west-2`。SPF/DKIM/DMARC 無し。本プロジェクトでは一切触らない）。決定3点：(1) **ゾーン移管は不要・レジストラのネームサーバーは触らない**（メール断リスクを移行から排除）、(2) **prod の dns モジュールはゾーンを新規作成せず `data` 参照**しレコードのみ作成（dev は新規作成＋prod ゾーンへ NS 4本を手動登録して委譲。§7 に明記）、(3) **カットオーバーは A案で確定**——新旧が同一アカウントのため `update-domain-association` で apex を含めサポート依頼なしに移動でき、TTL 短縮＋DNS 差し替えで窓は TTL 分のみ（B案はフォールバックとして保持）。§11 のステップ0を完了、§12 を「未決なし」に更新 |
 | 2026-08-30 | 第12版 | **リポジトリ名を実物に合わせて訂正**：`alp0007-aibee-lab` → **`alp007-aibee-lab`**（0が3つ。just47 の `alp006` に続く連番）。OIDC subject（`repo:aibee-lab-jp/alp007-aibee-lab:environment:dev`）・state バケット名（`alp007-aibee-lab-tfstate-<env>-<account_id>`）・リソース命名 prefix・§11 に反映。CLAUDE.md も追随。§11 のリポジトリ作成タスクを完了に更新（develop ブランチへ初期構成を push 済み） |
 | 2026-08-30 | 第13版 | **dev 構築の下ごしらえを実施・記録**：dev の state バケット作成完了（`alp007-aibee-lab-tfstate-dev-127289506790`）。**immutable subject claims は無効と実測で確定**（`use_immutable_subject: false`）——信頼ポリシーは標準書式でよく、第2版で挙げた懸念は解消。将来有効化した場合に使う ID 入り書式（`repo:aibee-lab-jp@198689698/alp007-aibee-lab@1337691730`）も §7 に記録した。§11 の進捗を更新 |
+| 2026-08-31 | 第14版 | **dev 環境の構築・実装・通し確認が完了**。実機で判明した事項を反映：(1) **OIDC subject は ID 入りの immutable 書式が必要**と実測で確定（§7 を訂正。`use_immutable_subject: false` は「独自カスタマイズ無し」の意味であり標準書式を意味しない。実書式は `sub_claim_prefix`、確実な確認は CloudTrail の `userIdentity.userName`）。(2) **`public/` の静的ファイルは拡張子ワイルドカードの behavior で S3 へ**（ロゴ SVG が既定 behavior に流れて 404 になった。`*.txt`/`*.xml`/`*.js` は入れない理由も記載）。(3) **artifact のルートがずれる問題**と `.nvmrc` を混ぜる対処（§8）。(4) **npm audit の初回棚卸し結果**を表で記録（postcss・sharp とも受け入れ・見直す合図つき。§2）。§11 を「dev 完了」に更新し、残作業（OG 画像・favicon・privacy 制定日）を明記 |
