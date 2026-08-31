@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-// フォームの1項目ラッパ：ラベル＋「必須」＋入力＋エラー。
+// フォームの1項目ラッパ：ラベル＋「必須」バッジ＋入力＋エラー（キャンバス v2 の造形）。
 // id は入力要素の id と一致させる（label の htmlFor、エラーの id=`${id}-error`）。
 export function Field({
   id,
@@ -14,17 +14,19 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="flex flex-col">
-      <label htmlFor={id} className="mb-2 flex items-baseline gap-2">
-        <span className="font-sans text-sm font-medium text-ink-700">{label}</span>
-        <span className="font-sans text-xs text-accent-600">必須</span>
+    <div className="flex flex-col gap-[9px]">
+      <label
+        htmlFor={id}
+        className="flex items-center gap-2 text-[13px] font-semibold tracking-[0.02em] text-ink-900"
+      >
+        {label}
+        <span className="rounded-[2px] border border-field px-[5px] py-px text-[10px] font-medium tracking-[0.06em] text-badge">
+          必須
+        </span>
       </label>
       {children}
       {error && (
-        <p
-          id={`${id}-error`}
-          className="mt-2 font-sans text-[0.8125rem] leading-[1.6] text-danger-600"
-        >
+        <p id={`${id}-error`} className="text-[12.5px] leading-[1.7] text-danger">
           {error}
         </p>
       )}

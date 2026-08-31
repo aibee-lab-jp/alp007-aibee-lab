@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { submitContact } from "@/app/contact/actions";
 import { contact } from "@/lib/site-content";
@@ -25,10 +25,11 @@ const subscribeNever = () => () => {};
 // ※ モックの本文欄に入っていたサンプル入力は表示確認用のダミー（ブリーフ §8）。
 //    初期値にもプレースホルダにもしない。プレースホルダは §4.2 の確定文言（site-content）。
 
-// 入力欄の共通スタイル（白地＋薄い罫＋focus で差し色のリング）。
-// エラー時は枠線を danger に（aria-invalid と併せて色以外でも伝わるようメッセージを出す）。
+// 入力欄の共通スタイル（キャンバス v2：白地＋細い罫・角丸 2px、focus で枠が差し色に変わる）。
+// モバイルは 16px（iOS の自動ズームを避ける）、デスクトップは 15px。
+// エラー時は枠と地を danger 系に（aria-invalid と併せ、色以外でもメッセージで伝える）。
 const fieldBase =
-  "w-full rounded-md border border-line bg-base-100 px-4 py-3 font-sans text-base text-ink-900 outline-none transition-[border-color,box-shadow] placeholder:text-ink-400 focus:border-accent-600 focus:shadow-[0_0_0_3px_var(--color-accent-100)] aria-[invalid=true]:border-danger-600";
+  "w-full rounded-[2px] border border-field bg-white px-3.5 py-[13px] text-[16px] text-ink-900 outline-none transition-colors placeholder:text-placeholder focus:border-accent aria-[invalid=true]:border-danger-line aria-[invalid=true]:bg-danger-field lg:text-[15px]";
 
 function errorMessage(key: ContactFieldKey, code: ContactErrorCode): string {
   if (key === "email" && code === "format") return contact.emailFormatError;
@@ -41,6 +42,31 @@ export function ContactForm() {
   const [sent, setSent] = useState(false);
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // 送信に失敗した／入力エラーが出たときに、その箇所まで画面を送るための合図（表示側の手当て）。
+  // 【なぜ必要か】通知枠はキャンバスどおりフォームの先頭に置くため、画面下端で送信すると失敗しても
+  // 視界に変化が無く「何も起きていない」と受け取られる。再送は DynamoDB の重複を招くため避けたい（§5）。
+  // 値ではなく更新回数（seq）で発火させるので、同じ文言のエラーが続けて起きても毎回スクロールする。
+  const [scrollCue, setScrollCue] = useState<{ to: "notice" | "field"; seq: number } | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+
+  const cueScroll = (to: "notice" | "field") =>
+    setScrollCue((c) => ({ to, seq: (c?.seq ?? 0) + 1 }));
+
+  // 実際のスクロールは描画後に行う（通知枠もエラー表示もこの時点で初めて DOM に存在する）。
+  useEffect(() => {
+    if (!scrollCue) return;
+    const target =
+      scrollCue.to === "notice"
+        ? noticeRef.current
+        : // 最初のエラー欄（DOM 順＝姓 → 名 → メール → 件名 → 本文）。
+          formRef.current?.querySelector('[aria-invalid="true"]');
+    // behavior: "auto" は CSS の scroll-behavior に委ねる指定。globals.css は通常 smooth、
+    // prefers-reduced-motion: reduce のときは auto（＝即座に移動）にしているため、
+    // 動きを減らす設定を自動的に尊重できる。
+    target?.scrollIntoView({ behavior: "auto", block: "center" });
+  }, [scrollCue]);
 
   // Service Worker 非対応ブラウザの判定（§5）。この環境では送信が必ず 403 になるため、
   // 入力させる前にフォームを描画せず案内に差し替える。
@@ -86,6 +112,7 @@ export function ContactForm() {
     const e = validate();
     if (Object.keys(e).length) {
       setErrors(e);
+      cueScroll("field");
       return;
     }
 
@@ -99,6 +126,7 @@ export function ContactForm() {
       !navigator.serviceWorker.controller
     ) {
       setFormError(contact.notices.swUncontrolled);
+      cueScroll("notice");
       return;
     }
 
@@ -114,10 +142,12 @@ export function ContactForm() {
       } else {
         if (result.fieldErrors) setErrors(result.fieldErrors);
         setFormError(result.error);
+        cueScroll("notice");
       }
     } catch {
       // ネットワーク等で Server Action 自体に到達できなかった場合。
       setFormError(contact.notices.submitFailed);
+      cueScroll("notice");
     } finally {
       setPending(false);
     }
@@ -135,34 +165,19 @@ export function ContactForm() {
     return (
       <section
         aria-live="polite"
-        className="py-6"
+        className="border-t-2 border-accent pt-[34px] lg:pt-10"
         style={{ animation: "al-fade 320ms cubic-bezier(0.2, 0.8, 0.3, 1)" }}
       >
-        <div className="mb-6 flex size-11 items-center justify-center rounded-full border border-accent-600 text-accent-600">
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M20 6 9 17l-5-5" />
-          </svg>
-        </div>
-        <h2 className="font-serif text-[clamp(1.375rem,4.5vw,1.75rem)] font-medium leading-[1.45] text-ink-900">
+        <h2 className="text-[19px] font-bold leading-[1.7] tracking-[-0.005em] text-ink-900 lg:text-[23px] lg:tracking-[-0.01em]">
           {contact.thanks.heading}
         </h2>
-        <p className={`mt-5 max-w-[46ch] ${paragraph}`}>{contact.thanks.body}</p>
+        <p className={`mt-4.5 lg:mt-5.5 ${paragraph}`}>{contact.thanks.body}</p>
       </section>
     );
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="flex flex-col gap-6">
+    <form ref={formRef} onSubmit={onSubmit} noValidate>
       {/* ハニーポット（画面外・bot 対策）。値が入っていれば Server Action 側で静かに破棄する。 */}
       <div
         aria-hidden="true"
@@ -179,9 +194,18 @@ export function ContactForm() {
         />
       </div>
 
+      {/* 通知枠（送信エラー／レート制限拒否／SW 未制御で共通・ブリーフ §8）。
+          キャンバスどおりフォームの先頭（リードの直下）に置く。 */}
+      {formError && (
+        <div ref={noticeRef} className="mb-9">
+          <Notice>{formError}</Notice>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-[26px] lg:gap-7">
       {/* 姓・名 */}
-      <div className="flex gap-4">
-        <div className="min-w-0 flex-1">
+      <div className="grid grid-cols-2 gap-3.5">
+        <div>
           <Field
             id="cf-last"
             label={contact.fields.lastName.label}
@@ -202,7 +226,7 @@ export function ContactForm() {
             />
           </Field>
         </div>
-        <div className="min-w-0 flex-1">
+        <div>
           <Field
             id="cf-first"
             label={contact.fields.firstName.label}
@@ -276,40 +300,40 @@ export function ContactForm() {
         <textarea
           id="cf-body"
           name="body"
-          rows={8}
+          rows={7}
           aria-required="true"
           aria-invalid={!!errors.body}
           aria-describedby={errors.body ? "cf-body-error" : undefined}
           placeholder={contact.fields.body.placeholder}
           value={values.body}
           onChange={setField("body")}
-          className={`${fieldBase} min-h-[11rem] resize-y leading-[1.8]`}
+          className={`${fieldBase} resize-y leading-[1.9]`}
         />
       </Field>
 
-      {/* 通知枠（送信エラー／レート制限拒否／SW 未制御で共通・ブリーフ §8）＋送信ボタン */}
-      <div className="mt-2 flex flex-col gap-4">
-        {formError && <Notice>{formError}</Notice>}
+      </div>
+
+      {/* 取り扱いの参照（ブリーフ §4.2）＋送信ボタン。
+          キャンバス：モバイルは注記の下に全幅ボタン、デスクトップは同じ行の左右に置く。 */}
+      <div className="mt-[26px] flex flex-col gap-[30px] lg:mt-8 lg:flex-row lg:items-center lg:justify-between lg:gap-10">
+        <p className="text-[12.5px] leading-[1.95] text-ink-600 lg:max-w-[380px]">
+          {contact.privacyNote.before}
+          <Link
+            href="/privacy"
+            className="border-b border-line-strong text-ink-600 transition-opacity hover:opacity-70"
+          >
+            {contact.privacyNote.linkLabel}
+          </Link>
+          {contact.privacyNote.after}
+        </p>
         <button
           type="submit"
           disabled={pending}
-          className="w-full rounded-md bg-accent-600 px-7 py-3.5 font-sans text-[0.9375rem] font-medium text-base-100 transition-colors hover:bg-accent-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-600 disabled:opacity-60 sm:w-auto sm:self-start sm:px-10"
+          className="w-full rounded-[2px] bg-accent py-[17px] text-[15px] font-medium tracking-[0.06em] text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60 lg:w-auto lg:shrink-0 lg:px-14 lg:py-4 lg:text-[14.5px] lg:tracking-[0.08em]"
         >
           {pending ? contact.submitting : contact.submit}
         </button>
       </div>
-
-      {/* 取り扱いの参照（ブリーフ §4.2） */}
-      <p className="font-sans text-[0.8125rem] leading-[1.8] text-ink-500">
-        {contact.privacyNote.before}
-        <Link
-          href="/privacy"
-          className="text-accent-600 underline decoration-accent-100 decoration-1 underline-offset-4 transition-colors hover:text-accent-700 hover:decoration-accent-600"
-        >
-          {contact.privacyNote.linkLabel}
-        </Link>
-        {contact.privacyNote.after}
-      </p>
     </form>
   );
 }

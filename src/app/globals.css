@@ -1,43 +1,46 @@
 @import "tailwindcss";
 
-/* ===== デザイントークン（ブリーフ §2）=====================================
-   方針：just47 の中立アイデンティティと家族的類似（暖オフホワイトの地・明朝見出し）。
-   ただしより実直・静的。差し色はディープネイビー1色のみ。ダークモードは初版非対応。
-   @theme に置くことで Tailwind のユーティリティ（bg-base-200 / text-ink-900 / border-line …）になる。
-   ========================================================================= */
+/* ===== デザイントークン（ブリーフ §2 第4版／Claude Design キャンバス v2 から採取）=========
+   方針：just47 とは明確に別のトーン。純白の地・暖色なし・テクスチャなし・Noto Sans JP のみ。
+   差し色はディープネイビー #24405E の1色。ヘッダーだけ淡いブルーグレーの面を敷く。
+   値はキャンバス（Aibee Lab {Top,Contact,Privacy,404} v2）の実値をそのまま写している。
+   ========================================================================================= */
 @theme {
-  /* 地：明るい暖オフホワイト。base-100＝面（表・カード）、base-200＝ページ地、base-300＝微差の帯。 */
-  --color-base-100: #ffffff;
-  --color-base-200: #f8f5ef;
-  --color-base-300: #f1ece2;
+  /* 面（純白は Tailwind 既定の white を使う。--color-base は text-base と衝突するため置かない） */
+  --color-surface: #f6f7f9; /* セクション交互の面・フッター */
+  --color-header: #edf1f7; /* ヘッダー（淡いブルーグレー） */
 
-  /* 文字：暖グレー〜チャコール。900＝見出し、700＝本文、500＝副次、400＝ラベル・補足。 */
-  --color-ink-900: #2a2724;
-  --color-ink-700: #4a443c;
-  --color-ink-500: #6e675d;
-  --color-ink-400: #8d857a;
+  /* 文字（ニュートラル。暖グレーにしない） */
+  --color-ink-900: #16181c; /* 見出し・強い文字 */
+  --color-ink-800: #2c3037; /* 表の本文 */
+  --color-ink-600: #4a4f57; /* 段落 */
+  --color-ink-400: #8a9099; /* ラベル・補足 */
+  --color-ink-300: #a3a9b2; /* 装飾の連番 */
+  --color-nav: #22303f; /* デスクトップのナビ */
 
-  /* 差し色：ディープネイビー（確定 #24405E）。リンク・ボタン・英字ラベルに限定使用。 */
-  --color-accent-700: #1a3049;
-  --color-accent-600: #24405e;
-  --color-accent-500: #3c5c7e;
-  --color-accent-100: #dee5ee;
+  /* 罫（細くニュートラルに） */
+  --color-line: #e4e7eb; /* 表の罫・枠 */
+  --color-line-soft: #eaecef; /* セクションの区切り */
+  --color-line-header: #d7e0eb; /* ヘッダー下端 */
+  --color-line-strong: #c6cbd2; /* フッターのリンク下線 */
+  --color-field: #d3d8de; /* 入力欄の枠・必須バッジ */
+  --color-placeholder: #a9afb8;
 
-  /* 罫：表が主役級のため薄く（§2）。 */
-  --color-line: #e6e0d5;
-  --color-line-strong: #d6cec0;
+  /* 差し色 */
+  --color-accent: #24405e;
 
-  /* エラー（フォームの通知枠・欄エラー）。地になじむ暖い赤。 */
-  --color-danger-600: #a63a2e;
+  /* エラー・通知 */
+  --color-danger: #b42318; /* エラー文字 */
+  --color-danger-line: #d0554a; /* エラー時の入力欄の枠 */
+  --color-danger-soft: #f3c6c0; /* 通知枠の罫 */
+  --color-danger-bg: #fef3f2; /* 通知枠の地 */
+  --color-danger-field: #fffbfa; /* エラー時の入力欄の地 */
+  --color-badge: #6b7280; /* 「必須」バッジの文字 */
 
-  /* 書体：見出し＝Noto Serif JP、本文＝Noto Sans JP（確定・§2）。
+  /* 書体：見出し・本文とも Noto Sans JP（第4版で明朝を廃止）。
      next/font が <html> に設定する CSS 変数を参照する。 */
   --font-sans: var(--font-noto-sans-jp), -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic",
     "Meiryo", sans-serif;
-  --font-serif: var(--font-noto-serif-jp), "Hiragino Mincho ProN", "Yu Mincho", serif;
-
-  --radius-md: 8px;
-  --radius-lg: 14px;
 }
 
 /* ===== グローバル基底 ===================================================== */
@@ -45,31 +48,24 @@
   html {
     /* ページ内アンカー（#services 等）が sticky ヘッダーに隠れないように。 */
     scroll-behavior: smooth;
-    scroll-padding-top: 5.5rem;
+    scroll-padding-top: 6rem;
   }
 
   body {
-    background: var(--color-base-200);
-    color: var(--color-ink-700);
+    background: #ffffff;
+    color: var(--color-ink-900);
     font-family: var(--font-sans);
     font-weight: 400;
+    /* キャンバスの基準行間。個別に指定しない要素はこれを継承する。 */
+    line-height: 1.9;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
-  h1,
-  h2,
-  h3 {
-    color: var(--color-ink-900);
-    font-family: var(--font-serif);
-    font-weight: 500;
-  }
-
   ::selection {
-    background: var(--color-accent-100);
+    background: #dee5ee;
   }
 
-  /* 動きを減らす設定を尊重する。 */
   @media (prefers-reduced-motion: reduce) {
     html {
       scroll-behavior: auto;

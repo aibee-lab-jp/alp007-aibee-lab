@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
+import { Noto_Sans_JP } from "next/font/google";
 import "./globals.css";
 import { SiteHeader } from "@/components/chrome/SiteHeader";
 import { SiteFooter } from "@/components/chrome/SiteFooter";
@@ -7,21 +7,14 @@ import { ServiceWorkerRegister } from "@/components/chrome/ServiceWorkerRegister
 import { env } from "@/lib/env";
 import { meta, site } from "@/lib/site-content";
 
-/* 見出し＝Noto Serif JP、本文＝Noto Sans JP（確定・§2／ブリーフ §2）。
+/* 見出し・本文とも Noto Sans JP（ブリーフ §2 第4版で明朝を廃止）。
+   ウェイトはキャンバスが使う 400/500/600/700 の4つ。
    next/font でセルフホスト。CJK は巨大なので preload しない（display: swap）。
-   CSS 変数として公開し、globals.css の @theme が font-serif / font-sans に接続する。 */
+   CSS 変数として公開し、globals.css の @theme が font-sans に接続する。 */
 const notoSansJP = Noto_Sans_JP({
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-noto-sans-jp",
-  display: "swap",
-  preload: false,
-});
-
-const notoSerifJP = Noto_Serif_JP({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-noto-serif-jp",
   display: "swap",
   preload: false,
 });
@@ -48,7 +41,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ja" className={`${notoSansJP.variable} ${notoSerifJP.variable}`}>
+    <html lang="ja" className={notoSansJP.variable}>
       <body className="flex min-h-screen flex-col">
         {/* Server Action(POST) 用に Service Worker を登録（UI なし。§5 の CloudFront OAC 対策）。 */}
         <ServiceWorkerRegister />
