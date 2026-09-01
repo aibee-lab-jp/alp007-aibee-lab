@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { pageMetadata } from "@/lib/metadata";
 import { ContactForm } from "@/components/contact/ContactForm";
-import { contact, meta, portal } from "@/lib/site-content";
+import { contact, meta } from "@/lib/site-content";
 import { container, paragraph, sectionGrid, sectionHeading, sectionLabel } from "@/lib/ui";
 
 // /contact：ページ自体は SSG、送信のみ Server Action（SSR）＝ §2・§5。
@@ -22,17 +22,8 @@ export default function ContactPage() {
           </header>
 
           <div className="lg:max-w-[660px]">
-            {/* 役割分担の明示（§5）：アプリの不具合・要望は「とりあえず47」の窓口へ流す。 */}
-            <p className={`mb-10 text-pretty lg:mb-12 ${paragraph}`}>
-              {contact.lead.before}
-              <a
-                href={portal.contactHref}
-                className="border-b border-accent text-accent transition-opacity hover:opacity-70"
-              >
-                {contact.lead.linkLabel}
-              </a>
-              {contact.lead.after}
-            </p>
+            {/* 別窓口（アプリのお問い合わせ）への誘導は暫定的に外している（site-content.ts の注記）。 */}
+            <p className={`mb-10 text-pretty lg:mb-12 ${paragraph}`}>{contact.lead}</p>
 
             <ContactForm />
           </div>

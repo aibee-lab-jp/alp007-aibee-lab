@@ -29,17 +29,10 @@ export function Services() {
                 <h3 className="text-[16.5px] font-semibold leading-[1.7] text-ink-900 [word-break:auto-phrase] lg:text-[18px] lg:leading-[1.65]">
                   {item.title}
                 </h3>
+                {/* 3項目めの外部リンク（とりあえず47 →）は暫定的に置いていない（site-content.ts の注記）。 */}
                 <p className="mt-2.5 text-[14px] leading-[2] text-ink-600 lg:mt-3.5 lg:leading-[2.05]">
                   {item.body}
                 </p>
-                {"link" in item && item.link ? (
-                  <a
-                    href={item.link.href}
-                    className="mt-3.5 inline-block border-b border-accent pb-0.5 text-[14px] font-medium text-accent transition-opacity hover:opacity-70 lg:mt-4.5 lg:pb-[3px]"
-                  >
-                    {item.link.label} <span aria-hidden="true">→</span>
-                  </a>
-                ) : null}
               </article>
             ))}
           </div>
